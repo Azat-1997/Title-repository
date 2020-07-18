@@ -1,0 +1,258 @@
+---
+title: "Classification"
+author: "Azat"
+date: '5 июня 2020 г '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r service,  warning=FALSE, message=FALSE}
+setwd("~/R_data_analyze/")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(mlbench)
+library(class)
+library(caret)
+library(randomForest)
+library(ggfortify)
+library(ROCR)
+library(gbm)
+library(car)
+data("PimaIndiansDiabetes2")
+set.seed(42)
+
+rob_stand <- function(x) x - median(x, na.rm = T) / IQR(x, na.rm = T)
+train_knn <- function (nk=10) {
+  set.seed(42)
+  
+pred_knn <- knn(train = select(train, -diabetes),
+                test = select(test, -diabetes),
+                cl = train$diabetes,
+                k = nk)
+
+knn_res <- table(pred_knn, Real = test$diabetes)
+
+# evaluate precision, recall and F1-score.
+
+precision_knn <- round(knn_res[2,2] / sum(knn_res[2,]), 2)
+recall_knn <- round(knn_res[2,2] / sum(knn_res[,2]), 2)
+F1_score_knn <- round((2 * precision_knn * recall_knn) /
+                        (precision_knn + recall_knn), 2)
+
+res <- list()
+res$metrics <- c("precision"=precision_knn,
+                 "recall"=recall_knn,
+                 "F1"=F1_score_knn)
+res$confusion <- knn_res
+return(res) }
+accuracy_metrics <- function(tbl) {
+
+precision <- round(tbl[2,2] / sum(tbl[2,]), 2)
+recall <- round(tbl[2,2] / sum(tbl[,2]), 2)
+F1_score <- round((2 * precision * recall) /
+                        (precision + recall), 2) 
+
+return( c("precision"=precision,"recall"=recall,"F1_score"=F1_score) )
+}
+
+```
+
+
+
+
+```{r, first_look, warning=FALSE, message=FALSE}
+# Count observation for pos and neg 
+PimaIndiansDiabetes2 %>% group_by(diabetes) %>% summarise(n())
+na.omit(gather(PimaIndiansDiabetes2)) %>% group_by(key) %>% summarize(n())
+# Let's count full observation (without any NAs) 
+na.omit(PimaIndiansDiabetes2) %>% group_by(diabetes) %>% summarise(n())
+
+# Build histogramms
+
+gather(PimaIndiansDiabetes2, key = variable, value = value, -diabetes) %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram() +
+  facet_grid(diabetes ~ variable, scales = "free")
+
+predictors <- select(PimaIndiansDiabetes2, -diabetes)
+PCA_prepare <- apply(predictors, MARGIN = 2, rob_stand)
+
+# Run PCA
+
+PCA <- prcomp(na.omit(PCA_prepare))
+PCA$percent <- 100 * (PCA$sdev^2 / sum(PCA$sdev^2))
+variation_perfomance <- data.frame(components = 1:length(PCA$percent),
+           simple_proportion = PCA$percent,
+           cumulative_proportion = cumsum(PCA$percent))
+
+gather(variation_perfomance, key = type,
+       value = value, -components) %>% ggplot(aes(x = components,
+                                                  y = value)) + geom_line() + geom_point() + facet_wrap(. ~ type, scales = "free")
+
+PCA$x <- data.frame(PCA$x)
+PCA$x$diagnosis <- na.omit(PimaIndiansDiabetes2)$diabetes
+ggplot(data.frame(PCA$x), aes(x = PC1, y = PC2, color = diagnosis)) +
+  geom_point(size = 0.5) +
+  xlab(paste("PC1", round(PCA$percent[1], 2),"%")) +
+  ylab(paste("PC2", round(PCA$percent[2], 2),"%"))
+
+```
+
+```{r knn, warning=FALSE, message=FALSE}
+total <- na.omit(PimaIndiansDiabetes2)
+table(total$diabetes)
+total$state <- sample(c(F,T), size = nrow(total), replace = T)
+
+train <- filter(total, state)
+test <- filter(total, !state)
+# Create train and test subset
+# Visualize metrics
+knn_quality <- data.frame(t(sapply(1:50,
+                                   FUN = function(x) train_knn(x)$metrics)))
+knn_quality$k <- 1:50
+colnames(knn_quality) <- c("precision_knn", "recall_knn", "F1_score", "k")
+gather(knn_quality, key = metric, value = value, -k) %>%
+  ggplot(aes(x = k, y = value, color = metric)) +
+  geom_point() + facet_grid(metric ~ .) + geom_line()
+
+# Choose k = 10. It's good enough for recall and quite good for percision
+train_knn(5)
+```
+
+
+```{r logistic_regression, warning=FALSE, message=FALSE}
+set.seed(42)
+# Check correlation
+heatmap(abs(cor(as.matrix(select(PimaIndiansDiabetes2,
+                                 -diabetes)),
+                use = "complete.obs")))
+
+logit_procedure <- function(dataset, response="diabetes",
+                            sample_prob = 0.5, treshold = 0.3, 
+         glm_fam = "binomial") {
+res <- list()
+# split the data
+test <- sample(c(F,T), size = nrow(dataset),
+               replace = T,
+               prob = c(sample_prob, 1-sample_prob))
+res$test <- test
+# fit the model
+res$model <- glm(diabetes ~ . , family = glm_fam, data = dataset[!test,])
+res$summary <- summary(res$model)
+# estimate this models
+res$pred <- predict(res$model, type = "response", newdata = select(dataset, -response)[test,])
+
+res$table <- table(predicted = res$pred > treshold, real = select(dataset, response)[test,])
+
+res$accuracy_metrics <- accuracy_metrics(res$table)
+return(res)
+
+}
+# total have 392 obs
+logres <- logit_procedure(total[-10],"diabetes")
+View(vif(logres$model))
+logres$summary
+logres$accuracy_metrics
+logres$table
+
+ROC_analysis <- list()
+
+ROC_analysis$all_pred <- roc(select(total, "diabetes")[logres$test,], logres$pred)
+ggroc(ROC_analysis$all_pred) + ggtitle(paste("all predictors","AUC:", round(ROC_analysis$all_pred$auc, 2)))
+
+
+```
+
+```{r good_features}
+good_features <-  na.omit(select(PimaIndiansDiabetes2, c(glucose, mass,
+                               pedigree, pregnant, diabetes)))
+nrow(good_features)
+fixed_logres <- logit_procedure(good_features)
+View(vif(fixed_logres$model))
+fixed_logres$summary
+fixed_logres$accuracy_metrics
+fixed_logres$table
+
+ROC_analysis$good_features <- roc(select(good_features, "diabetes")[fixed_logres$test,], fixed_logres$pred)
+
+ggroc(ROC_analysis$good_features) + ggtitle(paste("good_features","AUC:", round(ROC_analysis$good_features$auc, 2)))
+```
+
+```{r RandomForest}
+set.seed(42)
+
+rf_procedure <- function(dataset, ntree=60, response = 9) {
+
+res <- list()
+train <- sample(nrow(dataset),0.5*nrow(dataset))
+mtry = floor(sqrt(ncol(dataset)))
+rf <- randomForest(diabetes ~., data = dataset, subset = train,
+mtry = mtry, ntree= ntree, importance = T, do.trace = ntree/10)
+# Model
+res$rf <- rf
+# estimate the model
+class_pred <- predict(rf, type = "response", newdata = dataset[-train,-response])
+t <- table(class_pred,Real = dataset[-train, response])
+res$confusion <- t
+res$metrics <- accuracy_metrics(t)
+return(res)
+}
+
+rf <- rf_procedure(total[-10])
+
+cbind(data.frame(rf$rf$err.rate), ntree = 1:60) %>% gather(key=key, value=value,-ntree) %>% ggplot(aes(x = ntree, value)) + facet_grid(key~. , scales = "free") + geom_line()
+
+varImpPlot(rf$rf)
+rf$confusion
+rf$metrics
+
+```
+
+```{r boosting}
+# Boosting
+library(gbm)
+forest <- 3000
+data_boosting <- mutate(total, diabetes = as.numeric(diabetes)-1)
+train <- filter(data_boosting, state)
+test <- filter(data_boosting, !state)
+boost <- gbm(diabetes ~ ., data = train[-10],
+distribution = "bernoulli",
+n.trees = forest,
+interaction.depth = 4,
+shrinkage = 0.01)
+
+boost_stat <- summary(boost)
+
+arrange(boost_stat, -rel.inf) %>% ggplot(aes(x = var, y = rel.inf,
+                                             fill = var)) + geom_bar(stat="identity")
+
+
+boost_pred <- predict(boost, newdata = test, n.trees = forest, type = "response")
+
+boosting_confusion <- table(boost_pred > 0.3, test[,9])
+boosting_confusion
+accuracy_metrics(boosting_confusion)
+perf_rf <- roc(test[,9], boost_pred)
+ggroc(perf_rf) + ggtitle(paste("boosting", "AUC:", round(perf_rf$auc, 2)))
+```
+
+```{r SVM}
+good_features$state <- sample(c(T,F), nrow(good_features), replace = T)
+test_svm <- filter(good_features, state)
+train_svm <- filter(good_features, !state)
+svm_good_features <- svm(diabetes ~ ., select(train_svm, -state))
+svm_summary <- summary(svm_good_features)
+svm_pred <- predict(svm_good_features, type = "response", new_data = select(test_svm, state))
+
+length(svm_pred)
+nrow(test_svm)
+```
+
+
+
+

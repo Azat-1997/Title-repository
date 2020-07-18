@@ -1,0 +1,156 @@
+---
+title: "Untitled"
+author: "Azat"
+date: '9 июня 2020 г '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r service,  warning=FALSE, message=FALSE}
+setwd("~/R_data_analyze/")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(mlbench)
+library(ggfortify)
+library(pca3d)
+
+data("PimaIndiansDiabetes2")
+set.seed(42)
+
+rob_stand <- function(x) x - median(x, na.rm = T) / IQR(x, na.rm = T)
+clust_square <- function(tbl,n_clust=10, nstart=20) sapply(1:n_clust, 
+                                           function(n) kmeans(tbl,n,nstart = nstart)$tot.withinss)
+```
+
+
+
+
+```{r, first_look, warning=FALSE, message=FALSE}
+
+# Build histogramms
+good_features <-  na.omit(select(PimaIndiansDiabetes2, c(glucose, mass,
+                               pedigree, pregnant, diabetes)))
+
+gather(good_features, key = variable, value = value, -diabetes) %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram() +
+  facet_grid(diabetes ~ variable, scales = "free")
+
+predictors <- select(good_features, -diabetes)
+PCA_prepare <- apply(predictors, MARGIN = 2, rob_stand)
+
+# Run PCA
+
+PCA <- prcomp(na.omit(PCA_prepare))
+PCA$percent <- 100 * (PCA$sdev^2 / sum(PCA$sdev^2))
+variation_perfomance <- data.frame(components = 1:length(PCA$percent),
+           simple_proportion = PCA$percent,
+           cumulative_proportion = cumsum(PCA$percent))
+
+gather(variation_perfomance, key = type,
+       value = value, -components) %>% ggplot(aes(x = components,
+                                                  y = value)) + geom_line() + geom_point() + facet_wrap(. ~ type, scales = "free")
+
+PCA$x <- data.frame(PCA$x)
+PCA$x$diagnosis <- na.omit(good_features)$diabetes
+ggplot(PCA$x, aes(x = PC1, fill = diagnosis, alpha = 0.7)) +
+  geom_density() +
+  xlab(paste("PC1", round(PCA$percent[1], 2),"%"))
+
+```
+
+
+
+```{r, tot.withinss, warning=FALSE, message=FALSE}
+set.seed(42)
+# compare results before PCA and after
+n = 10
+tot.withinss <- data.frame(n_clust = 1:n,
+                           original = clust_square(na.omit(PCA_prepare,
+                                                           n_clust = n)),
+                            PCA = clust_square(select(PCA$x, -diagnosis),
+                                               n_clust = n))
+                           
+gather(tot.withinss, key = type,
+       value = value, -n_clust) %>% ggplot(aes(x = n_clust,
+                                                  y = value)) + geom_line() + geom_point() + facet_wrap(. ~ type, scales = "free")
+
+
+# Choose k = 2 and 4
+
+km <- function(PCA, n=2) {
+  
+km_res <- kmeans(select(PCA$x, -diagnosis), n, nstart = 20)
+res <- list()
+res$table <- table(data.frame(cl = km_res$cluster,
+                 diagnosis = select(PCA$x, diagnosis)))
+
+res$pca_clust <- data.frame(PCA$x[, 1:2],
+                              cl = as.factor(km_res$cluster),
+                             diagnosis = select(PCA$x, diagnosis))
+
+res$plot <- ggplot(res$pca_clust, aes(x = PC1, fill = cl, alpha = 0.5)) +
+  geom_density() +
+  xlab(paste("PC1", round(PCA$percent[1], 2),"%"))
+return(res)
+}
+
+km_res2 <- km(PCA, 2)
+km_res3 <- km(PCA, 3)
+km_res2$table
+chisq.test(km_res2$table)
+km_res2$plot
+
+chisq.test(km_res3$table)
+km_res3$plot
+
+good_features$kmeans <- km_res3$pca_clust[,3]
+gather(good_features, key = parameter, value = value, -c(cl, diagnosis)) %>% ggplot(aes(x = value, fill = diabetes)) + geom_histogram(alpha = 0.5) + facet_grid(cl ~ parameter, scales = "free")
+km_res3$table
+```
+
+
+```{r, dendrogramms, warning=FALSE, message=FALSE}
+PCA_prepare_dist <- dist(na.omit(PCA_prepare))
+PCA_prepare_hc <- hclust(PCA_prepare_dist, method = "average")
+plot(PCA_prepare_hc,method = "average", hang = -1, labels = PCA$x$diagnosis)
+rect.hclust(PCA_prepare_hc, k=2)
+hc2 <- cutree(PCA_prepare_hc, k = 2)
+hc3 <- cutree(PCA_prepare_hc, k = 3)
+good_features$hc2 <- hc2
+good_features$hc3 <- hc3
+table(PCA$x$diagnosis, hc)
+#"average"
+#"single"
+#"complete"
+
+```
+
+
+
+
+
+```{r, dendrogramms, warning=FALSE, message=FALSE}
+set.seed(42)
+PCA_dist <- dist(PCA$x)
+PCA_hc <- hclust(PCA_dist, method = "average")
+plot(PCA_hc,method = "average", hang = -1, labels = PCA$x$diagnosis)
+rect.hclust(PCA_hc, k=2)
+table(PCA$x$diagnosis, hc = cutree(PCA_hc, k = 2))
+#"average"
+#"single"
+#"complete"
+plot(PCA_hc,method = "average", hang = -1, labels = PCA$x$diagnosis)
+rect.hclust(PCA_hc, k=3)
+table(PCA$x$diagnosis, hc = cutree(PCA_hc, k = 3))
+```
+
+
+
+
+
