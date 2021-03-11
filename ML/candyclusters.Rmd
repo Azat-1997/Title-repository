@@ -1,0 +1,106 @@
+---
+title: "Candies"
+author: "Azat"
+date: '11 марта 2021 г '
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE}
+library(ggrepel)
+library(plotly)
+library(psych)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+setwd("~/R_data_analyze/ML")
+candies <- read.csv("candy-data.csv")
+```
+
+```{r combine_features}
+features <- list()
+features$composition <- select(candies, !c(competitorname, Y, winpercent, sugarpercent, pricepercent))
+
+features$percent <- select(candies, c(winpercent, sugarpercent, pricepercent))
+```
+
+
+
+```{r firstlook}
+pairs(features$percent)
+features$percent %>% gather() %>% ggplot(aes(x = value)) + facet_grid(.~key, scales = "free") + geom_histogram()
+
+# cor matrix of nominative data
+phi_matrix <- sapply(colnames(features$composition), function(x) sapply(colnames(features$composition), function(y) phi(table(features$composition[c(x,y)]))))
+
+heatmap(phi_matrix)
+```
+```{r normalize_percents}
+median_normalize <- function(x) (x - median(x)) / IQR(x)
+features$normalized_percent <- as.data.frame(apply(features$percent, MARGIN = 2, median_normalize))
+
+features$normalized_percent %>% gather() %>% ggplot(aes(x = value)) + facet_grid(.~key, scales = "free") + geom_histogram(bins = 20)
+
+# look again 
+pairs(features$normalized_percent)
+# build PCA
+
+features$percentPCA <- prcomp(features$normalized_percent)
+pairs(as.data.frame(features$percentPCA$x))
+data.frame(components = 1:length(features$percentPCA$sdev), 
+           variance = (features$percentPCA$sdev) ^ 2 / sum((features$percentPCA$sdev) ^ 2)) 
+```
+
+
+```{r binary_variables}
+phi_svd <- svd(phi_matrix)
+
+variance <- data.frame(component = 1:length(phi_svd$d), variance = phi_svd$d / sum(phi_svd$d))
+variance %>% ggplot(aes(x = component, y = variance)) + geom_point() + geom_line()
+
+features$scored_composition <- as.data.frame(as.matrix(features$composition) %*% phi_svd$v)
+
+
+features$composition_dist <- dist(features$scored_composition[c("V1", "V2", "V3")])
+
+h_tree <- hclust(features$composition_dist)
+plot(h_tree)
+features$scored_composition$hclass <- as.factor(cutree(h_tree, k = 3))
+
+features$scored_composition$kmclass <- as.factor(kmeans(features$scored_composition[c("V1", "V2", "V3")], iter.max = 20, centers = 3)$cluster)
+
+table(features$scored_composition$hclass)
+table(features$scored_composition$kmclass)
+table(candies$Y)
+
+features$scored_composition %>% ggplot(aes(x = V1, y = V2, color = hclass)) + geom_point(size = 1) + xlab(paste("PC1:", round(variance[1,2] * 100, 2), "%")) + ylab(paste("PC2:", round(variance[2,2] * 100, 2), "%"))
+
+features$scored_composition %>% ggplot(aes(x = V1, y = V2, color = kmclass)) + geom_point(size = 1) + xlab(paste("PC1:", round(variance[1,2] * 100, 2), "%")) + ylab(paste("PC2:", round(variance[2,2] * 100, 2), "%"))
+
+features$scored_composition$response <- as.factor(candies$Y)
+levels(features$scored_composition$response) <- c("lose", "win")
+
+features$scored_composition$competitors <- candies$competitorname
+
+hclass_plot <- features$scored_composition %>% ggplot(aes(x = V1, y = V2, color = hclass, shape = response , label = competitors)) + geom_point(size = 2) + xlab(paste("PC1:", round(variance[1,2] * 100, 2), "%")) + ylab(paste("PC2:", round(variance[2,2] * 100, 2), "%")) + geom_text_repel(data = dplyr::filter(features$scored_composition, response == "win"))
+
+kmean_plot <- features$scored_composition %>% ggplot(aes(x = V1, y = V2, color = kmclass, shape = response, label = competitors)) + geom_point(size = 2) + xlab(paste("PC1:", round(variance[1,2] * 100, 2), "%")) + ylab(paste("PC2:", round(variance[2,2] * 100, 2), "%")) + geom_text_repel(data = dplyr::filter(features$scored_composition, response == "win"))
+
+
+hclass_plot
+kmean_plot
+
+km_table <- table(features$scored_composition[c("kmclass", "response")])
+hcl_table <- table(features$scored_composition[c("hclass", "response")])
+km_table
+hcl_table
+chisq.test(km_table)
+chisq.test(hcl_table)
+```
+
