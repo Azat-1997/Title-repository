@@ -1,0 +1,5 @@
+/Python/Chem/ChemClient/.pytest_cache
+/Python/Chem/ChemClient/__pycache__
+/Python/Chem/ChemClient/client_config.json
+/Python/Chem/ChemServer/chem_app
+/Python/Chem/ChemServer/server_config.json

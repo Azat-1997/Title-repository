@@ -1,0 +1,5 @@
+ID,ExperimentName,Result
+101,MarshmallowTest,Success
+102,MilgramExperiment,Failure
+"10,5",MilgramVasya,BlahBlah
+"10.5",VovanNikita,Smeert

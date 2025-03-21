@@ -1,0 +1,86 @@
+import pandas as pd 
+import os.path
+samples_info = pd.read_csv('data_table.tsv', '\t')
+samples_info['readable_names'] = samples_info.iloc[:,:3].apply(lambda x: "_".join(x.astype(str)), axis=1)
+
+name =  samples_info["readable_names"]
+path =  list(samples_info["File"].apply(lambda x: x.strip()))
+configfile: "config.yaml"
+chr = config["chromosome"]
+assembly = config["assembly"]
+
+rule all:
+    input: "project.tar.gz"
+
+rule load_genome:
+    output: "index/" + assembly + "/" + chr + ".fa.gz"
+    params: chr = config["chromosome"],
+            assembly = config["assembly"]
+    shell: "wget ftp://hgdownload.cse.ucsc.edu/goldenPath/{params.assembly}/chromosomes/{params.chr}.fa.gz -O {output}"
+
+rule index: 
+    input: genome = "index/" + assembly + "/" + chr + ".fa.gz"
+    params: pref = "index/" + assembly + "/" + "index"
+    output: ".index_success"
+    shell: "bowtie2-build {input.genome} {params.pref} && touch {output}"
+
+rule archive:
+    input: "qc/multiqc/reads.html","qc/multiqc/bams.html", expand("BigWig/{file}.bw", file = name)
+    output: "project.tar.gz"
+    shell: "tar -cvzf {output} {input}"
+
+rule deep_tools:
+# works fine but I needed to install it before. And I installed it by pip, because conda finds some confilcts between packages. It's seems to be strange: I used bioconda channel and other arguments from reference manual. I have similar problem with sammtools and bowtie2. I hope I will not crush my environment
+        input:
+                bam = "bams/{file}_sorted.bam",
+                bai = "bams/{file}_sorted.bam.bai"
+        output: "BigWig/{file}.bw"
+        shell: 'bamCoverage -b {input.bam} -o {output}'
+
+rule bam_index:
+        input:  "bams/{file}_sorted.bam"
+        output: "bams/{file}_sorted.bam.bai"
+        shell: "samtools index {input} {output}"
+
+rule sort_bam:
+        input: "bams/{file}.bam"
+        output: "bams/{file}_sorted.bam"
+        params: pref = "bams/{file}_sorted"
+        shell:  "samtools sort {input} -T {params.pref} -o {output}"
+
+rule align:
+# We can use wildcards in here because of bams_qc. That rule works as support rule, wich generates list of bam-files
+    input: reads="reads/{file}.fastq", idx_stat = ".index_success"
+    output: align = "bams/{file}.bam", log = "bams/{file}.log"
+    params: index = os.path.join("index/" + assembly + "/", "index")
+    shell: "mkdir bams || (bowtie2 -x {params.index} -U {input.reads} | samtools view -S -b - > {output.align}) 2> {output.log}"
+
+rule fastqc:
+     input: "reads/{sample}.fastq"
+     output:
+           html="qc/fastqc/{sample}.html",
+           zip="qc/fastqc/{sample}_fastqc.zip" # the suffix _fastqc.zip is necessary for multiqc to find the file. If not using multiqc, you are free to choose an arbitrary filename
+     params: ""
+     log:
+         "logs/fastqc/{sample}.log"
+     threads: 1
+     wrapper:
+          "0.62.0/bio/fastqc"
+
+rule multiqc:
+# Works fine 
+    input: "qc/fastqc/"
+    output: "qc/multiqc/reads.html"
+    shell: "multiqc {input} -n {output}"
+
+rule multiqc_bam:
+# For unknown reasons multiqc doesn't want to treat bams-directory, but if we run multiqc in terminal we get proper behaivor.
+        input: "bams/"
+        output: "qc/multiqc/bams.html"
+        shell: "multiqc {input} -n {output}"
+
+
+
+
+
+
