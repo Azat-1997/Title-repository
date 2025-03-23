@@ -1,6 +1,4 @@
 This is first content for file
-<<<<<<< Updated upstream
 This row should appear in 2nd commit
-=======
 This row should appear in 3rd commit
->>>>>>> Stashed changes
+
