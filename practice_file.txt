@@ -1,1 +1,2 @@
 This is first content for file
+This row should appear in 2nd commit
