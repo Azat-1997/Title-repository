@@ -1,4 +1,4 @@
 This is first content for file
 This row should appear in 2nd commit
 This row should appear in 3rd commit
-
+First row for 4th commit
