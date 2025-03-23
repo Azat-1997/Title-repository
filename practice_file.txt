@@ -2,4 +2,7 @@ This is first content for file
 This row should appear in 2nd commit
 This row should appear in 3rd commit
 First row for 4th commit
+<<<<<<< HEAD
 Second row for 4th commit
+=======
+>>>>>>> 20f1cfa739764285baa8ae36edf8f5219c5305ea
